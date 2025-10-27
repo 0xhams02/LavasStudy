@@ -2,14 +2,28 @@
     <div class="page-index">
         <h2>LAVAS</h2>
         <h4>[ˈlɑ:vəz]</h4>
+
+        <div class="demo-row">
+            <image-preview
+                :src="thumb192"
+                :preview-src="full512"
+                alt="示例图片（点击放大）"
+            ></image-preview>
+        </div>
     </div>
+    
 </template>
 
 <script>
 function setState(store) {}
 
+import ImagePreview from '@/components/ImagePreview';
+
 export default {
     name: 'index',
+    components: {
+        ImagePreview
+    },
     metaInfo: {
         title: 'Home',
         titleTemplate: '%s - Lavas',
@@ -20,6 +34,12 @@ export default {
     },
     async asyncData({store, route}) {
         setState(store);
+    },
+    data() {
+        return {
+            thumb192: '/static/img/icons/android-chrome-192x192.png',
+            full512: '/static/img/icons/android-chrome-512x512.png'
+        };
     }
 };
 </script>
