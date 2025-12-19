@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <title>Bitmovin Demo - 循环播放 + 广告</title>
+  <meta charset="UTF-8" />
+  <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+
+  <!-- Bitmovin Player（全量包：包含 DASH/HLS 等） -->
+  <script src="https://cdn.bitmovin.com/player/web/8/bitmovinplayer.js"></script>
+  <script src="https://cdn.bitmovin.com/player/web/8/modules/bitmovinplayer-advertising-bitmovin.js"
+    type="text/javascript"></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      color: #fff;
+      font-weight: 300;
+      background: linear-gradient(to right, rgba(44, 131, 185, 1) 0%, rgba(30, 171, 227, 1) 100%);
+      min-height: 100vh;
+    }
+
+    #wrapper {
+      min-height: 100vh;
+    }
+
+    #banner {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.45);
+      background-color: rgba(30, 171, 227, 0.35);
+      width: 100%;
+      backdrop-filter: blur(6px);
+    }
+
+    #banner h1 {
+      margin: 0;
+      padding: 18px 16px;
+      font-size: 18px;
+      letter-spacing: 0.2px;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 18px 16px 40px;
+    }
+
+    h2,
+    p {
+      font-weight: 300;
+      text-align: center;
+      margin: 16px 0;
+      opacity: 0.95;
+    }
+
+    #player {
+      max-width: 900px;
+      width: 90%;
+      margin: 18px auto 0;
+      box-shadow: 0px 0px 56px 0px rgba(0, 0, 0, 0.55);
+      background: #000;
+    }
+
+    .meta {
+      max-width: 900px;
+      width: 90%;
+      margin: 14px auto 0;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      opacity: 0.95;
+      font-size: 13px;
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(0, 0, 0, 0.14);
+    }
+
+    .hint {
+      max-width: 900px;
+      width: 90%;
+      margin: 8px auto 0;
+      text-align: center;
+      opacity: 0.85;
+      font-size: 12px;
+    }
+
+    a {
+      color: #e7fbff;
+      font-weight: 400;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(231, 251, 255, 0.55);
+    }
+
+    a:hover {
+      color: #fff;
+      border-bottom-color: rgba(255, 255, 255, 0.9);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="wrapper">
+    <div id="banner">
+      <h1>Bitmovin HTML5 Player（Loop + Pre-roll Ads）</h1>
+    </div>
+
+    <div class="container">
+      <h2>播放列表无限循环；每条正片播放前都会调度一次 VMAP Pre-roll 广告</h2>
+
+      <div id="player"></div>
+
+      <div class="meta">
+        <div class="pill">当前正片：<span id="nowPlaying">-</span></div>
+        <div class="pill">索引：<span id="nowIndex">-</span></div>
+      </div>
+      <div class="hint">
+        说明：浏览器可能限制“有声自动播放”。若遇到不自动播放，可将 <code>muted</code> 设为 <code>true</code>。
+      </div>
+
+      <p>
+        更多资料请看 bitmovin 在线文档：
+        <a href="https://bitmovin.com/support" target="_blank" rel="noreferrer">Developer Section</a>
+      </p>
+    </div>
+  </div>
+
+  <script type="text/javascript">
+    // ===== 你的参数（广告 + 正片 + 循环） =====
+
+    var i = 0;
+
+    // 你给的 playlist（这里直接用 HLS；如需 DASH 可加 dash 字段）
+    var playlist = [
+      {
+        name: 'Sintel',
+        hls: 'https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/playlist_v-0576p-1400k-libx264.mp4.m3u8'
+      },
+      {
+        name: 'Bitmovin Demo Video',
+        hls: 'https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/playlist_v-0240p-0400k-libx264.mp4.m3u8'
+      }
+    ];
+
+    function addParams(url) {
+      var sep = url.indexOf('?') === -1 ? '?' : '&';
+      var ts = new Date().getTime();
+      return url + sep + 'cb=' + ts + '&correlator=' + ts;
+    }
+
+    var conf = {
+      key: '7f7d77af-7373-4a18-8435-68baf2fa0274',
+      playback: {
+        autoplay: true,
+        preload: true,
+        muted: false
+      },
+      tweaks: {
+        BACKWARD_BUFFER_PURGE_INTERVAL: 10,
+        startup_threshold: 0.5,
+        app_id: 'com.viu.tv-webos',
+        file_protocol: true
+      },
+      advertising: {
+        allowedUiElements: ['COUNTDOWN', 'AD_ATTRIBUTION'],
+        adBreaks: []
+      }
+    };
+
+    // 广告（VMAP Pre-roll）
+    var AD_BREAK_ID = 'preroll-vmap';
+    var VMAP_URL_BASE =
+      'https://pubads.g.doubleclick.net/gampad/ads?sz=1280x720&iu=/94348418/OTTUNI100007001LGTV&impl=s&vpa=auto&plcmt=1&gdfp_req=1&env=vp&unviewed_position_start=1&url=[referrer_url]&description_url=[description_url]&ad_rule=1&output=xml_vmap1&cmsid=2674704&vid=83872&vid_d=3292&pp=ctv_profile_limitation&cust_params=ott_env%3Dqa%26ott_cate%3Dkoreandrama%26ott_series_id%3D6549%26ott_product_id%3D83872%26ott_cpname%3Dat-x%26ott_content_language%3Dthai%26ott_preview_video%3Dtrue';
+
+    var adBreak = {
+      tag: {
+        type: 'vmap',
+        url: addParams(VMAP_URL_BASE)
+      },
+      id: AD_BREAK_ID,
+      position: 'pre'
+    };
+
+    var NOW_PLAYING_EL = document.getElementById('nowPlaying');
+    var NOW_INDEX_EL = document.getElementById('nowIndex');
+
+    // 注册广告模块
+    bitmovin.player.Player.addModule(window.bitmovin.player['advertising-bitmovin'].default);
+
+    var player = new bitmovin.player.Player(document.getElementById('player'), conf);
+
+    function buildSourceFromPlaylistItem(item) {
+      // 只要提供你有的字段即可（dash/hls/progressive/poster 都可选）
+      var src = {};
+      if (item.dash) src.dash = item.dash;
+      if (item.hls) src.hls = item.hls;
+      return src;
+    }
+
+    async function schedulePreRoll() {
+      if (!player.ads || typeof player.ads.schedule !== 'function') {
+        console.warn('[ads] 广告模块未就绪/不可用：player.ads.schedule 不存在');
+        return;
+      }
+
+      // 每次都丢弃旧的 break（防止只播一次或累积）
+      try {
+        player.ads.discardAdBreak(AD_BREAK_ID);
+      } catch (e) {
+        // 第一次可能不存在，忽略
+      }
+
+      // 刷新 correlator/cb
+      adBreak.tag.url = addParams(VMAP_URL_BASE);
+
+      await player.ads.schedule(adBreak);
+    }
+
+    async function loadIndex(index) {
+      var item = playlist[index];
+      NOW_PLAYING_EL.textContent = item && item.name ? item.name : '-';
+      NOW_INDEX_EL.textContent = String(index);
+
+      await schedulePreRoll();
+      await player.load(buildSourceFromPlaylistItem(item));
+
+      // 兜底：部分环境 autoplay 有概率不触发时，手动调用一次
+      try {
+        await player.play();
+      } catch (e) {
+        console.warn('[play] 自动播放可能被浏览器策略拦截：', e);
+      }
+    }
+
+    var switching = false;
+
+    window.addEventListener('load', function () {
+      loadIndex(i)
+        .then(function () {
+          console.log('[init] loaded:', playlist[i].name);
+        })
+        .catch(function (err) {
+          console.error('[init] Error while loading source:', err);
+        });
+
+      player.on('playbackfinished', function () {
+        if (switching) return;
+        switching = true;
+
+        (async function () {
+          i = (i + 1) % playlist.length;
+
+          try {
+            await player.unload();
+          } catch (e) {
+            // 忽略卸载异常
+          }
+
+          await loadIndex(i);
+          console.log('[loop] now playing:', playlist[i].name);
+        })()
+          .catch(function (err) {
+            console.error('[loop] switch error:', err);
+          })
+          .finally(function () {
+            switching = false;
+          });
+      });
+    });
+  </script>
+</body>
+
+</html>
