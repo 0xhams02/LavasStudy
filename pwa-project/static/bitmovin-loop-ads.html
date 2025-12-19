@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bitmovin Modular - 循环播放 + 广告(Pre-roll)</title>
+
+  <!-- Bitmovin Player (Modular) -->
+  <script src="https://cdn.bitmovin.com/player/web/8/bitmovinplayer-core.js"></script>
+  <script src="https://cdn.bitmovin.com/player/web/8/modules/bitmovinplayer-hls.js"></script>
+  <script src="https://cdn.bitmovin.com/player/web/8/modules/bitmovinplayer-advertising-bitmovin.js"></script>
+
+  <!-- Bitmovin UI -->
+  <link rel="stylesheet" href="https://cdn.bitmovin.com/player/web/8/bitmovinplayer-ui.css" />
+  <script src="https://cdn.bitmovin.com/player/web/8/bitmovinplayer-ui.js"></script>
+
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #0b0f17;
+      color: #e8eefc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .title {
+      font-size: 16px;
+      line-height: 22px;
+      margin: 0 0 10px;
+      opacity: 0.9;
+    }
+
+    #player {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+    }
+
+    .meta {
+      margin-top: 10px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      opacity: 0.9;
+      font-size: 13px;
+    }
+
+    .pill {
+      padding: 4px 8px;
+      border: 1px solid rgba(232, 238, 252, 0.18);
+      border-radius: 999px;
+      background: rgba(232, 238, 252, 0.06);
+    }
+
+    .hint {
+      opacity: 0.75;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1 class="title">循环播放（Playlist） + 每条正片前 Pre-roll 广告（VMAP）</h1>
+    <div id="player"></div>
+    <div class="meta">
+      <div class="pill">当前正片：<span id="nowPlaying">-</span></div>
+      <div class="pill">索引：<span id="nowIndex">-</span></div>
+      <div class="hint">说明：每次切换到下一条正片都会重新调度一次 Pre-roll 广告。</div>
+    </div>
+  </div>
+
+  <script>
+    // ===== 你提供的参数（做了少量健壮性修正） =====
+
+    var i = 0;
+
+    var playlist = [
+      {
+        name: 'Sintel',
+        hls: 'https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/playlist_v-0576p-1400k-libx264.mp4.m3u8'
+      },
+      {
+        name: 'Bitmovin Demo Video',
+        hls: 'https://storage.googleapis.com/shaka-demo-assets/angel-one-hls/playlist_v-0240p-0400k-libx264.mp4.m3u8'
+      }
+    ];
+
+    function addParams(url) {
+      var sep = url.indexOf('?') === -1 ? '?' : '&';
+      var ts = new Date().getTime();
+      return url + sep + 'cb=' + ts + '&correlator=' + ts;
+    }
+
+    var conf = {
+      key: '7f7d77af-7373-4a18-8435-68baf2fa0274',
+      playback: {
+        autoplay: true,
+        preload: true,
+        muted: false
+      },
+      tweaks: {
+        BACKWARD_BUFFER_PURGE_INTERVAL: 10,
+        startup_threshold: 0.5,
+        app_id: 'com.viu.tv-webos',
+        file_protocol: true
+      },
+      advertising: {
+        allowedUiElements: ['COUNTDOWN', 'AD_ATTRIBUTION'],
+        adBreaks: []
+      }
+    };
+
+    // ===== Modular：注册所需模块 =====
+    // HLS & Advertising (Bitmovin Integration)
+    bitmovin.player.Player.addModule(window.bitmovin.player['hls'].default);
+    bitmovin.player.Player.addModule(window.bitmovin.player['advertising-bitmovin'].default);
+
+    var player = new bitmovin.player.Player(document.getElementById('player'), conf);
+    bitmovin.playerui.UIFactory.buildDefaultUI(player);
+
+    var NOW_PLAYING_EL = document.getElementById('nowPlaying');
+    var NOW_INDEX_EL = document.getElementById('nowIndex');
+
+    var AD_BREAK_ID = 'preroll-vmap';
+
+    var adBreaks = [
+      {
+        tag: {
+          url: addParams(
+            'https://pubads.g.doubleclick.net/gampad/ads?sz=1280x720&iu=/94348418/OTTUNI100007001LGTV&impl=s&vpa=auto&plcmt=1&gdfp_req=1&env=vp&unviewed_position_start=1&url=[referrer_url]&description_url=[description_url]&ad_rule=1&output=xml_vmap1&cmsid=2674704&vid=83872&vid_d=3292&pp=ctv_profile_limitation&cust_params=ott_env%3Dqa%26ott_cate%3Dkoreandrama%26ott_series_id%3D6549%26ott_product_id%3D83872%26ott_cpname%3Dat-x%26ott_content_language%3Dthai%26ott_preview_video%3Dtrue'
+          ),
+          type: 'vmap'
+        },
+        id: AD_BREAK_ID,
+        position: 'pre'
+      }
+    ];
+
+    async function schedulePreRollAds() {
+      if (!player.ads || typeof player.ads.schedule !== 'function') {
+        console.warn('[ads] 广告模块未就绪/未加载：player.ads 不可用');
+        return;
+      }
+
+      // 确保每次播放新正片前都重新调度一次（避免旧的 break 残留）
+      try {
+        player.ads.discardAdBreak(AD_BREAK_ID);
+      } catch (e) {
+        // 可能第一次不存在，忽略
+      }
+
+      // 重新生成 correlator/cb
+      adBreaks[0].tag.url = addParams(
+        'https://pubads.g.doubleclick.net/gampad/ads?sz=1280x720&iu=/94348418/OTTUNI100007001LGTV&impl=s&vpa=auto&plcmt=1&gdfp_req=1&env=vp&unviewed_position_start=1&url=[referrer_url]&description_url=[description_url]&ad_rule=1&output=xml_vmap1&cmsid=2674704&vid=83872&vid_d=3292&pp=ctv_profile_limitation&cust_params=ott_env%3Dqa%26ott_cate%3Dkoreandrama%26ott_series_id%3D6549%26ott_product_id%3D83872%26ott_cpname%3Dat-x%26ott_content_language%3Dthai%26ott_preview_video%3Dtrue'
+      );
+
+      await Promise.all(adBreaks.map(function (b) { return player.ads.schedule(b); }));
+    }
+
+    async function loadAndPlay(index) {
+      var item = playlist[index];
+      NOW_PLAYING_EL.textContent = item && item.name ? item.name : '-';
+      NOW_INDEX_EL.textContent = String(index);
+
+      await schedulePreRollAds();
+      await player.load({ hls: item.hls });
+
+      // 兜底：某些环境 autoplay 不稳定时，手动触发一次 play()
+      try {
+        await player.play();
+      } catch (e) {
+        console.warn('[play] 自动播放可能被浏览器策略拦截：', e);
+      }
+    }
+
+    var switching = false;
+
+    window.addEventListener('load', function () {
+      loadAndPlay(i).catch(function (err) {
+        console.error('[load] 初次加载失败：', err);
+      });
+
+      player.on('playbackfinished', function () {
+        if (switching) return;
+        switching = true;
+
+        (async function () {
+          i = (i + 1) % playlist.length;
+
+          try {
+            await player.unload();
+          } catch (e) {
+            // 忽略卸载异常
+          }
+
+          await loadAndPlay(i);
+          console.log('[playlist] now playing:', playlist[i].name);
+        })()
+          .catch(function (err) {
+            console.error('[playlist] 切换失败：', err);
+          })
+          .finally(function () {
+            switching = false;
+          });
+      });
+    });
+  </script>
+</body>
+
+</html>
